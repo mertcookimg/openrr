@@ -1,4 +1,8 @@
+use std::{path::Path, sync::Arc};
+
 use arci::{Error, JointTrajectoryClient, TrajectoryPoint, WaitFuture};
+
+use crate::SelfCollisionChecker;
 
 // TODO: speed limit
 fn trajectory_from_positions(
@@ -23,8 +27,7 @@ where
 {
     pub client: T,
     /// using_joints and collision_check_robot must share the k::Node instance.
-    pub using_joints: k::Chain<f64>,
-    pub collision_check_robot: &'a k::Chain<f64>,
+    pub collision_checker: Arc<SelfCollisionChecker>,
     pub planner: openrr_planner::JointPathPlanner<f64>,
 }
 
@@ -34,14 +37,12 @@ where
 {
     pub fn new(
         client: T,
-        using_joints: k::Chain<f64>,
-        collision_check_robot: &'a k::Chain<f64>,
+        collision_checker: Arc<SelfCollisionChecker>,
         planner: openrr_planner::JointPathPlanner<f64>,
     ) -> Self {
         Self {
             client,
-            using_joints,
-            collision_check_robot,
+            collision_checker,
             planner,
         }
     }
@@ -104,4 +105,18 @@ where
         }
         self.client.send_joint_trajectory(trajs)
     }
+}
+
+pub fn create_collision_avoidance_client<'a, P: AsRef<Path>>(
+    urdf_path: P,
+    // config: &SelfCollisionCheckerConfig,
+    client: Arc<dyn JointTrajectoryClient>,
+    full_chain: &'a k::Chain<f64>,
+) -> CollisionAvoidanceClient<'a, Arc<dyn JointTrajectoryClient>> {
+    let urdf_robot = urdf_rs::read_file(urdf_path).unwrap();
+    let collision_checker = openrr_planner::CollisionChecker::from_urdf_robot(&urdf_robot, 0.01);
+
+    let planner =
+        openrr_planner::JointPathPlanner::new((*full_chain).clone(), collision_checker, 5.0, 5, 5);
+    CollisionAvoidanceClient::new(client, full_chain.clone(), &full_chain, planner)
 }
